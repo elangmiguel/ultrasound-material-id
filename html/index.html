@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Identificación de Material</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap" rel="stylesheet">
+
+    <style>
+        body {
+            font-family: 'Roboto', sans-serif;
+            margin: 0;
+            padding: 0;
+            background: #f4f7fa;
+            color: #333;
+        }
+
+        header {
+            background-color: #004080;
+            color: white;
+            padding: 15px 20px;
+            text-align: center;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+        }
+
+        .container {
+            max-width: 95%;
+            margin: 0 auto 50px;
+        }
+
+        h2 {
+            text-align: center;
+            margin: 30px 0 10px;
+            font-size: 28px;
+        }
+
+        .seleccion {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+
+        label {
+            font-weight: 600;
+            margin-right: 5px;
+        }
+
+        select, input {
+            padding: 6px 10px;
+            font-size: 16px;
+            border-radius: 5px;
+            border: 1px solid #ccc;
+            min-width: 160px;
+        }
+
+        .botones-tiempo {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        .botones-tiempo button {
+            margin: 0 10px;
+            padding: 10px 15px;
+            font-size: 16px;
+            border: none;
+            background-color: #007bff;
+            color: white;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.3s ease;
+        }
+
+        .botones-tiempo button:hover {
+            background-color: #0056b3;
+        }
+
+        .botones-tiempo button.active {
+            background-color: #0056b3;
+        }
+
+        #grafico {
+            display: block;
+            margin: 0 auto;
+            background-color: #fff;
+            border: 1px solid #ccc;
+            border-radius: 10px;
+            padding: 10px;
+        }
+
+        .info {
+            text-align: center;
+            margin-top: 20px;
+            font-size: 18px;
+        }
+
+        .info input {
+            width: 120px;
+            text-align: center;
+            margin: 0 10px;
+        }
+
+        .resultado {
+            font-weight: bold;
+            margin-top: 10px;
+        }
+
+        .material-identificado {
+            margin-top: 8px;
+            font-weight: 600;
+            color: #004080;
+        }
+    </style>
+</head>
+<body>
+
+<header>
+    <h1>Lecturas Recientes del Sensor - Identificación de Material</h1>
+</header>
+
+<div class="container">
+    <h2>Visualización en Tiempo Real</h2>
+    <div class="seleccion">
+        <div>
+            <label for="dispositivo">Seleccionar dispositivo:</label><br>
+            <select id="dispositivo" onchange="cargarSensores()">
+                <option value="">-- Selecciona --</option>
+            </select>
+        </div>
+        <div>
+            <label for="sensor">Seleccionar sensor:</label><br>
+            <select id="sensor" onchange="obtenerDatos(); cargarCalibracionesPagina()">
+                <option value="">-- Selecciona --</option>
+            </select>
+        </div>
+        <div>
+            <label for="distanciaReal">Distancia real (cm):</label><br>
+            <input type="number" id="distanciaReal" value="30" min="1" onchange="actualizarGrafico()">
+        </div>
+    </div>
+
+    <div class="botones-tiempo">
+        <button onclick="cambiarRango(20)" class="active">Últimos 20s</button>
+        <button onclick="cambiarRango(60)">Último 1 min</button>
+        <button onclick="cambiarRango(300)">Últimos 5 min</button>
+    </div>
+
+    <canvas id="grafico" width="1200" height="600"></canvas>
+
+    <div class="info">
+        <div class="resultado" id="reflectividad">Reflectividad estimada: ---</div>
+        <div class="material-identificado" id="materialIdentificado">Material identificado: ---</div>
+    </div>
+<div style="text-align:center; margin-top: 20px;">
+    <button onclick="enviarReflectancia()" style="
+        padding: 10px 20px;
+        font-size: 16px;
+        background-color: #004080;
+        color: white;
+        border: none;
+        border-radius: 5px;
+        cursor: pointer;
+    ">Enviar Reflectancia</button>
+</div>
+<h2>Calibraciones Guardadas</h2>
+<div id="reflectancia-lista-container" style="max-width: 1200px; margin: 0 auto;">
+    <table id="tablaReflectancia" border="1" cellpadding="8" cellspacing="0" style="width: 100%; border-collapse: collapse; text-align: center; background-color: white;">
+        <thead style="background-color: #004080; color: white;">
+            <tr>
+                <th>ID</th>
+                <th>Fecha</th>
+                <th>Dispositivo ID</th>
+                <th>Lectura ID</th>
+                <th>Distancia Real (cm)</th>
+                <th>Valor</th>
+                <th>Material ID</th>
+            </tr>
+        </thead>
+        <tbody id="reflectancia-tbody">
+        </tbody>
+    </table>
+
+    <div style="margin-top: 10px; text-align: center;">
+        <button id="btnPrev" disabled>Anterior</button>
+        <span id="paginaActual">1</span> / <span id="totalPaginas">1</span>
+        <button id="btnNext" disabled>Siguiente</button>
+    </div>
+</div>
+    </div>
+
+<script>
+    const API_BASE = 'http://192.168.56.2:3000';
+
+    let chart;
+    let todosLosDatos = [];
+    let rangoTiempo = 20000; // 20 segundos por defecto
+    let materiales = [];
+let paginaActual = 1;
+const limitePorPagina = 10;
+
+async function cargarCalibracionesPagina(page = 1) {
+    try {
+        const res = await fetch(`${API_BASE}/reflectancias?page=${page}&page_size=${limitePorPagina}`);
+        const result = await res.json();
+
+        const tbody = document.getElementById("reflectancia-tbody");
+        tbody.innerHTML = "";
+
+        if (result.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="7">No hay calibraciones registradas.</td></tr>`;
+        } else {
+            result.forEach(row => {
+                const fecha = new Date(row.fecha).toLocaleString();
+                tbody.innerHTML += `
+                    <tr>
+                        <td>${row.id}</td>
+                        <td>${fecha}</td>
+                        <td>${row.dispositivo_id}</td>
+                        <td>${row.lectura_id}</td>
+                        <td>${parseFloat(row.distancia_real).toFixed(2)}</td>
+                        <td>${parseFloat(row.valor).toFixed(2)}</td>
+                        <td>${row.material_id || '-'}</td>
+                    </tr>
+                `;
+            });
+        }
+
+        document.getElementById("paginaActual").textContent = page;
+        // No hay totalPages en la respuesta, ajustar si es necesario
+
+        document.getElementById("btnPrev").disabled = page <= 1;
+        // Aquí se debe manejar la desactivación de btnNext según totalPages si se provee esa info
+
+    } catch (error) {
+        console.error("Error cargando calibraciones paginadas:", error);
+    }
+}
+
+
+document.getElementById("btnPrev").addEventListener("click", () => {
+    if (paginaActual > 1) {
+        paginaActual -= 1;
+        cargarCalibracionesPagina(paginaActual);
+    }
+});
+
+document.getElementById("btnNext").addEventListener("click", () => {
+    paginaActual += 1;
+    cargarCalibracionesPagina(paginaActual);
+});
+
+
+// Cargar página inicial al cargar la página
+window.onload = async () => {
+    await cargarMateriales();
+    await cargarDispositivos();
+    await cargarCalibracionesPagina();
+
+    setInterval(() => {
+        obtenerDatos();
+    }, 5000);
+};
+
+
+    // Cargar materiales y guardar localmente
+    async function cargarMateriales() {
+        try {
+            const res = await fetch(`${API_BASE}/materiales`);
+            materiales = await res.json();
+        } catch (error) {
+            console.error("Error al cargar materiales:", error);
+            materiales = [];
+        }
+    }
+
+    async function cargarDispositivos() {
+        try {
+            const res = await fetch(`${API_BASE}/dispositivos`);
+            const dispositivos = await res.json();
+            const dispositivoSelect = document.getElementById("dispositivo");
+
+            dispositivoSelect.innerHTML = '<option value="">-- Selecciona --</option>';
+            dispositivos.forEach(d => {
+                const opt = document.createElement("option");
+                opt.value = d.id;
+                opt.textContent = d.nombre;
+                dispositivoSelect.appendChild(opt);
+            });
+        } catch (error) {
+            console.error("Error al cargar dispositivos:", error);
+        }
+    }
+
+    async function cargarSensores() {
+        const dispositivoId = document.getElementById("dispositivo").value;
+        const sensorSelect = document.getElementById("sensor");
+
+        sensorSelect.innerHTML = '<option value="">-- Selecciona --</option>';
+        if (!dispositivoId) return;
+
+        try {
+            const res = await fetch(`${API_BASE}/dispositivos/${dispositivoId}/sensores`);
+            const sensores = await res.json();
+
+            sensores.forEach(s => {
+                const opt = document.createElement("option");
+                opt.value = s.id;
+                opt.textContent = s.referencia;
+                sensorSelect.appendChild(opt);
+            });
+        } catch (error) {
+            console.error("Error al cargar sensores:", error);
+        }
+    }
+
+    async function obtenerDatos() {
+        const sensorId = document.getElementById("sensor").value;
+        if (!sensorId) return;
+
+        try {
+            const response = await fetch(`${API_BASE}/sensores/${sensorId}/lecturas`);
+            const data = await response.json();
+            todosLosDatos = data;
+            actualizarGrafico();
+        } catch (error) {
+            console.error("Error al obtener datos:", error);
+        }
+    }
+
+async function enviarReflectancia() {
+    const dispositivoId = parseInt(document.getElementById("dispositivo").value);
+    const distanciaReal = parseFloat(document.getElementById("distanciaReal").value);
+
+    if (!dispositivoId) {
+        alert("Seleccione un dispositivo.");
+        return;
+    }
+    if (isNaN(distanciaReal) || distanciaReal <= 0) {
+        alert("Ingrese una distancia real válida.");
+        return;
+    }
+    if (!todosLosDatos.length) {
+        alert("No hay datos de lectura para enviar.");
+        return;
+    }
+
+    const ultimoDato = todosLosDatos[todosLosDatos.length - 1];
+    const valor = ultimoDato.valor;
+    const lecturaId = ultimoDato.id;
+
+    if (!lecturaId || isNaN(valor)) {
+        alert("Datos de lectura inválidos.");
+        return;
+    }
+
+    const reflectividad = calcularReflectividad(valor, distanciaReal)/100;
+    const material = identificarMaterial(reflectividad);
+    const materialId = material ? material.id : null;
+    
+    //if (reflectividad < 0 || reflectividad > 1) {
+    //    alert("El valor de reflectividad debe estar entre 0 y 1.");
+    //    return;
+    //}
+    const payload = {
+        dispositivo_id: dispositivoId,
+        lectura_id: lecturaId,
+        distancia_real: distanciaReal,
+        valor: valor,
+        material_id: materialId
+    };
+
+    try {
+        const response = await fetch(`${API_BASE}/reflectancia`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+        });
+
+        if (!response.ok) throw new Error("Error al guardar la reflectancia");
+
+        const data = await response.json();
+        alert(`Reflectancia guardada correctamente: ${data.message}`);
+    } catch (error) {
+        console.error("Error al enviar reflectancia:", error);
+        alert("Error al guardar la reflectancia");
+    }
+}
+
+
+
+
+    function cambiarRango(segundos) {
+        rangoTiempo = segundos * 1000;
+        document.querySelectorAll(".botones-tiempo button").forEach(btn => btn.classList.remove("active"));
+        event.target.classList.add("active");
+        actualizarGrafico();
+    }
+
+    // Calcula reflectividad con el valor y distancia real
+    function calcularReflectividad(valorSensor, distanciaReal) {
+        if (distanciaReal <= 0 || isNaN(valorSensor)) return null;
+        return (valorSensor / distanciaReal) * 100;
+    }
+
+    // Encuentra el material más cercano a la reflectividad calculada
+    function identificarMaterial(reflectividad) {
+        if (reflectividad === null || materiales.length === 0) return null;
+
+        // Convertir reflectividad % a valor decimal (0-1) para comparación
+        const refDec = reflectividad / 100;
+
+        // Buscar material con reflectancia_referencia más cercana al valor calculado
+        let materialCercano = null;
+        let minDiferencia = Infinity;
+        materiales.forEach(mat => {
+            const diff = Math.abs(mat.reflectancia_referencia - refDec);
+            if (diff < minDiferencia) {
+                minDiferencia = diff;
+                materialCercano = mat;
+            }
+        });
+        return materialCercano;
+    }
+
+    function actualizarGrafico() {
+        const ahora = new Date();
+        const desde = new Date(ahora.getTime() - rangoTiempo);
+        const distanciaReal = parseFloat(document.getElementById("distanciaReal").value);
+
+        const datosFiltrados = todosLosDatos.filter(d => {
+            const f = new Date(d.fecha);
+            return f >= desde && f <= ahora && !isNaN(d.valor);
+        });
+
+        const labels = datosFiltrados.map(d => new Date(d.fecha));
+        const valores = datosFiltrados.map(d => d.valor);
+
+        if (!chart) {
+            const ctx = document.getElementById("grafico").getContext("2d");
+            chart = new Chart(ctx, {
+                type: "line",
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: "Lectura Sensor",
+                        data: valores,
+                        borderColor: "#0057e7",
+                        backgroundColor: "rgba(0, 123, 255, 0.1)",
+                        borderWidth: 2,
+                        fill: true,
+                        pointRadius: 3,
+                        tension: 0.3
+                    }]
+                },
+                options: {
+                    animation: false,
+                    responsive: true,
+                    scales: {
+                        x: {
+                            type: "time",
+                            time: {
+                                unit: "second",
+                                tooltipFormat: 'dd/MM/yyyy HH:mm:ss',
+                                displayFormats: {
+                                    second: 'HH:mm:ss'
+                                }
+                            },
+                            title: {
+                                display: true,
+                                text: "Hora"
+                            }
+                        },
+                        y: {
+                            title: {
+                                display: true,
+                                text: "Valor"
+                            },
+                            min: 0
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            display: true
+                        }
+                    }
+                }
+            });
+        } else {
+            chart.data.labels = labels;
+            chart.data.datasets[0].data = valores;
+            chart.update();
+        }
+
+        // Último valor de la muestra para cálculo
+        const ultimoValor = valores.length ? valores[valores.length - 1] : null;
+        const reflectividadCalculada = calcularReflectividad(ultimoValor, distanciaReal);
+
+        const reflectividadDiv = document.getElementById("reflectividad");
+        const materialDiv = document.getElementById("materialIdentificado");
+
+        if (reflectividadCalculada !== null) {
+            reflectividadDiv.textContent = `Reflectividad estimada: ${reflectividadCalculada.toFixed(3)} %`;
+
+            const material = identificarMaterial(reflectividadCalculada);
+            if (material) {
+                materialDiv.textContent = `Material identificado: ${material.nombre} (Reflectancia referencia: ${(material.reflectancia_referencia * 100).toFixed(2)} %)`;
+            } else {
+                materialDiv.textContent = "Material identificado: No disponible";
+            }
+        } else {
+            reflectividadDiv.textContent = "Reflectividad estimada: ---";
+            materialDiv.textContent = "Material identificado: ---";
+        }
+    }
+
+    // Carga inicial
+    window.onload = async () => {
+        await cargarMateriales();
+        await cargarDispositivos();
+    	setInterval(() => {
+    	    obtenerDatos();
+  	}, 5000); // Actualiza cada 5000 ms
+    };
+</script>
+
+</body>
+</html>
